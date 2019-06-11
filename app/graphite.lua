@@ -1,4 +1,4 @@
-local socket = require 'socket'
+local socket = require 'nginx.socket'
 local ngx    = require 'ngx'
 
 local M = {}
@@ -34,11 +34,12 @@ function M:new(params)
 	local graph = {}
 	
 	local success, r = pcall(function()
+		self.use_default_qualifier = params.use_default_qualifier
 		self.prefix = {
 			first  = params.prefix and params.prefix.first or '';
 			second = params.prefix and params.prefix.second or '';
 		}
-		
+
 		local sock = socket:new{
 			host = params.host;
 			port = tonumber(params.port);
@@ -70,13 +71,13 @@ function M:send()
 	
 	self:transmit(metric_msg, response_time)
 	if metrics.rx ~= 0 then
-		local rx_msg = string.format('%s.traffic.%s.%s.rx'
+		local rx_msg = string.format('%s.traffic.%s.%s.rx',
 			metrics.first_prefix, metrics.second_prefix, metrics.operation
 		)
 		self:transmit(rx_msg, metrics.rx)
 	end
 	if metrics.tx ~= 0 then
-		local tx_msg = string.format('%s.traffic.%s.%s.tx'
+		local tx_msg = string.format('%s.traffic.%s.%s.tx',
 			metrics.first_prefix, metrics.second_prefix, metrics.operation
 		)
 		self:transmit(tx_msg, metrics.tx)
