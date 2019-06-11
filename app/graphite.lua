@@ -3,11 +3,6 @@ local ngx    = require 'ngx'
 
 local M = {}
 
-local DEFAULT_PREFIX = {
-	first  = '';
-	second = '';
-}
-
 local ok, metric = pcall(require, 'metric')
 if not ok then
 	if (not metric or not metric.qualifier) and M.use_default_qualifier then
@@ -39,14 +34,10 @@ function M:new(params)
 	local graph = {}
 	
 	local success, r = pcall(function()
-		if params.prefix then
-			self.prefix = {
-				first  = DEFAULT_PREFIX.first;
-				second = DEFAULT_PREFIX.second;
-			}
-		else
-			self.prefix = DEFAULT_PREFIX
-		end
+		self.prefix = {
+			first  = params.prefix and params.prefix.first or '';
+			second = params.prefix and params.prefix.second or '';
+		}
 		
 		local sock = socket:new{
 			host = params.host;
