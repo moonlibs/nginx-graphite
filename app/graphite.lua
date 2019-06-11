@@ -1,0 +1,95 @@
+local socket = require 'socket'
+local ngx    = require 'ngx'
+
+local M = {}
+
+local DEFAULT_PREFIX = {
+	first  = '';
+	second = '';
+}
+
+local ok, metric = pcall(require, 'metric')
+if not ok then
+	if (not metric or not metric.qualifier) and M.use_default_qualifier then
+		metric = {}
+		metric.qualifier = function()
+			return {
+				operation = ngx.var.request_uri:gsub('^/', ''):gsub('/', '-');
+				first_prefix  = M.prefix.first;
+				second_prefix = M.prefix.second;
+				tx = tonumber(ngx.var.body_bytes_sent) or 0;
+				rx = tonumber(ngx.var.content_length)  or 0;
+			}
+		end
+	else
+		error("Not defining qualifier method in metric module: "..tostring(metric))
+	end
+end
+
+function M:transmit(metric_msg, response_time)
+	local msg  = metric_msg.." "..tostring(response_time).." "..tostring(ngx.time()).."\n"
+	self.sock:send(msg)
+end
+
+function M:new(params)
+	assert(params and type(params) == 'table', "require params and params must be table")
+	assert(params.host, "require host")
+	assert(params.port and tonumber(params.port), "require port and port must be number")
+	
+	local graph = {}
+	
+	local success, r = pcall(function()
+		if params.prefix then
+			self.prefix = {
+				first  = DEFAULT_PREFIX.first;
+				second = DEFAULT_PREFIX.second;
+			}
+		else
+			self.prefix = DEFAULT_PREFIX
+		end
+		
+		local sock = socket:new{
+			host = params.host;
+			port = tonumber(params.port);
+		};
+		sock:open()
+		return sock;
+	end, params)
+	
+	if not success then
+		error(r)
+	else
+		graph.sock = r
+	end
+	
+	setmetatable(graph , self)
+	self.__index = self
+	
+	ngx.log(ngx.WARN, "Graphite created")
+	return graph
+end
+
+function M:send()
+	local response_time = ngx.now() - ngx.req.start_time()
+	local success, metrics = pcall(metric.qualifier)
+	if not success then return ngx.log(ngx.ERR, metrics) end
+	local metric_msg = string.format('%s.hits.%s.%s.%s',
+		metrics.first_prefix, metrics.second_prefix, metrics.operation, ngx.status
+	)
+	
+	self:transmit(metric_msg, response_time)
+	if metrics.rx ~= 0 then
+		local rx_msg = string.format('%s.traffic.%s.%s.rx'
+			metrics.first_prefix, metrics.second_prefix, metrics.operation
+		)
+		self:transmit(rx_msg, metrics.rx)
+	end
+	if metrics.tx ~= 0 then
+		local tx_msg = string.format('%s.traffic.%s.%s.tx'
+			metrics.first_prefix, metrics.second_prefix, metrics.operation
+		)
+		self:transmit(tx_msg, metrics.tx)
+	end
+end
+
+return M
