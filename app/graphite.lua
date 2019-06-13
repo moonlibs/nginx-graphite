@@ -4,7 +4,7 @@ local ngx    = require 'ngx'
 local M = {}
 
 function M:transmit(metric_msg)
-	local msg  = string.format("%s %s %s\n", metric_msg, tostring(ngx.time()))
+	local msg  = string.format("%s %s\n", metric_msg, tostring(ngx.time()))
 	self.sock:send(msg)
 end
 
@@ -12,7 +12,7 @@ function M:new(params)
 	assert(params and type(params) == 'table', "require params and params must be table")
 	assert(params.host, "require host")
 	assert(params.port and tonumber(params.port), "require port and port must be number")
-	assert(params.prefix and type(params.prefix) == 'function', "require prefix and prefix must be function")
+	assert(params.prefix and type(params.prefix) == 'string', "require prefix and prefix must be string")
 
 	local graph  = {
 		metric = {};
@@ -27,19 +27,19 @@ function M:new(params)
 			form = {
 				hits = function(operation)
 					local response_time = ngx.now() - ngx.req.start_time()
-					return string.format('%s.hits.%s.%s %s', self.prefix(), operation, ngx.status, response_time)
+					return string.format('%s.hits.%s.%s %s', params.prefix, operation, ngx.status, response_time)
 				end;
 				traffic_tx = function(operation)
 					local tx = tonumber(ngx.var.body_bytes_sent) or 0;
 					if tx ~= 0 then
-						return string.format('%s.traffic.%s.tx %s', self.prefix(), operation, tx)
+						return string.format('%s.traffic.%s.tx %s', params.prefix, operation, tx)
 					end
 					return
 				end;
 				traffic_rx = function(operation)
 					local rx = tonumber(ngx.var.content_length) or 0;
 					if rx ~= 0 then
-						return string.format('%s.traffic.%s.rx %s', self.prefix(), operation, rx)
+						return string.format('%s.traffic.%s.rx %s', params.prefix, operation, rx)
 					end
 					return
 				end;
@@ -83,7 +83,7 @@ function M:send()
 	local success, operation = pcall(self.metric.operation_qualifier)
 	if not success then return ngx.log(ngx.ERR, operation) end
 	local host = string.gsub(ngx.var.host, "%.", "-")
-	for name, form_message in pairs(self.metric.form) do
+	for _, form_message in pairs(self.metric.form) do
 		local msg = form_message(operation, host)
 		if msg then self:transmit(msg) end
 	end
