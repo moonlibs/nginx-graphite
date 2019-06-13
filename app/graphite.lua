@@ -3,35 +3,35 @@ local ngx    = require 'ngx'
 
 local M = {}
 
-local ok, metric = pcall(require, 'metric')
-if not ok then
-	if (not metric or not metric.qualifier) and M.use_default_qualifier then
-		metric = {}
-		metric.qualifier = function()
-			return {
-				operation = ngx.var.request_uri:gsub('^/', ''):gsub('/', '-');
-				first_prefix  = M.prefix.first;
-				second_prefix = M.prefix.second;
-				tx = tonumber(ngx.var.body_bytes_sent) or 0;
-				rx = tonumber(ngx.var.content_length)  or 0;
-			}
-		end
-	else
-		error("Not defining qualifier method in metric module: "..tostring(metric))
-	end
-end
-
 function M:transmit(metric_msg, response_time)
 	local msg  = metric_msg.." "..tostring(response_time).." "..tostring(ngx.time()).."\n"
 	self.sock:send(msg)
 end
+
+local ok, metric = pcall(require, 'metric')
 
 function M:new(params)
 	assert(params and type(params) == 'table', "require params and params must be table")
 	assert(params.host, "require host")
 	assert(params.port and tonumber(params.port), "require port and port must be number")
 	
-	local graph = {}
+	self.use_default_qualifier = params.use_default_qualifier
+	if not ok or not metric or not metric.qualifier then
+		if params.use_default_qualifier then
+			metric = {}
+			metric.qualifier = function()
+				return {
+					operation = ngx.var.request_uri:gsub('^/', ''):gsub('/', '-');
+					first_prefix  = M.prefix.first;
+					second_prefix = M.prefix.second;
+					tx = tonumber(ngx.var.body_bytes_sent) or 0;
+					rx = tonumber(ngx.var.content_length)  or 0;
+				}
+			end
+		else
+			error("Not defining qualifier method in metric module: "..tostring(metric))
+		end
+	end
 	
 	local success, r = pcall(function()
 		self.use_default_qualifier = params.use_default_qualifier
@@ -47,6 +47,8 @@ function M:new(params)
 		sock:open()
 		return sock;
 	end, params)
+	
+	local graph = {}
 	
 	if not success then
 		error(r)
