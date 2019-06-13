@@ -22,7 +22,7 @@ function M:new(params)
 	if params.use_default_metrics then
 		graph.metric = {
 			operation_qualifier = function()
-				return ngx.var.request_uri:gsub('^/', ''):gsub('/', '-');
+				return ngx.var.request_uri:gsub('^/', ''):gsub('%?.*$', ''):gsub('/', '-');
 			end;
 			form = {
 				hits = function(operation)
