@@ -1,11 +1,45 @@
 local socket = require 'nginx.socket'
 local ngx    = require 'ngx'
+local ffi    = require 'ffi'
 
 local M = {}
 
-function M:transmit(metric_msg)
-	local msg  = string.format("%s %s\n", metric_msg, tostring(ngx.time()))
-	self.sock:send(msg)
+ffi.cdef[[
+	int snprintf(char *str, size_t, const char *format, ...);
+]]
+
+local C = ffi.C
+-- max uri length is 16 Kbyte on nginx
+local buff_size = 16 * 1024
+local message = ffi.new("char[?]", buff_size)
+
+function M:transmit(prefix, t, operation, field, value)
+	local n = C.snprintf(message, buff_size, "%s.%s.%s.%s %.0f %.0f\n",
+		prefix, t, operation, tostring(field), value, ngx.time()
+	)
+	self.sock:send(message, n)
+end
+
+function M:qualifier()
+	return {ngx.req.get_method(), {"hits", "traffic_tx", "traffic_rx"}}
+end
+
+function M:hits(prefix, operation)
+	self:transmit(prefix, 'hits', operation, ngx.status, ngx.now() - ngx.req.start_time())
+end
+
+function M:traffic_tx(prefix, operation)
+	local tx = tonumber(ngx.var.body_bytes_sent) or 0
+	if tx ~= 0 then
+		self:transmit(prefix, 'traffic', operation, 'tx', tx)
+	end
+end
+
+function M:traffic_rx(prefix, operation)
+	local rx = tonumber(ngx.var.content_length) or 0
+	if rx ~= 0 then
+		self:transmit(prefix, 'traffic', operation, 'rx', rx)
+	end
 end
 
 function M:new(params)
@@ -13,83 +47,46 @@ function M:new(params)
 	assert(params.host, "require host")
 	assert(params.port and tonumber(params.port), "require port and port must be number")
 	assert(params.prefix and type(params.prefix) == 'string', "require prefix and prefix must be string")
-
+	
 	local graph  = {
-		metric = {};
 		prefix = params.prefix;
 	}
-
-	if params.use_default_metrics then
-		graph.metric = {
-			operation_qualifier = function()
-				if ngx.status == 501 then
-					return 'not-implemented-method'
-				else
-					return ngx.var.request_uri:gsub('^/', ''):gsub('%?.*$', ''):gsub('/', '-');
-				end
-			end;
-			form = {
-				hits = function(operation)
-					local response_time = ngx.now() - ngx.req.start_time()
-					return string.format('%s.hits.%s.%s %s', params.prefix, operation, ngx.status, response_time)
-				end;
-				traffic_tx = function(operation)
-					local tx = tonumber(ngx.var.body_bytes_sent) or 0;
-					if tx ~= 0 then
-						return string.format('%s.traffic.%s.tx %s', params.prefix, operation, tx)
-					end
-					return
-				end;
-				traffic_rx = function(operation)
-					local rx = tonumber(ngx.var.content_length) or 0;
-					if rx ~= 0 then
-						return string.format('%s.traffic.%s.rx %s', params.prefix, operation, rx)
-					end
-					return
-				end;
-			};
-		}
-	else
-		local ok, res = pcall(require, 'metric')
-		if not ok or not res then
-			error(string.format("Impossible to load metric module. Res=%s", tostring(res)))
-		end
-		if not res.operation_qualifier then
-			error("No operation_qualifier function in metric module")
-		end
-		if not res.form then
-			error("No form function in metric module")
-		end
-		graph.metric = res
-	end
-
+	
 	local success, result = pcall(function(params)
 		local sock = socket:new{
 			host = params.host;
 			port = tonumber(params.port);
-		};
+		}
 		sock:open()
-		return sock;
+		return sock
 	end, params)
 	if not success or not result then
 		error(result)
 	end
-
+	
 	graph.sock = result
-	setmetatable(graph , self)
+	setmetatable(graph, self)
 	self.__index = self
 	
-	ngx.log(ngx.WARN, "Graphite created")
 	return graph
 end
 
 function M:send()
-	local success, operation = pcall(self.metric.operation_qualifier)
-	if not success then return ngx.log(ngx.ERR, operation) end
+	-- operation[1] - metric name
+	-- operation[2] - list of metric's types
+	-- operation[3] - reserved for internal usage
+	-- operation[4] - reserved for internal usage
+	local success, operation = pcall(self.qualifier, self)
+	if not success then return ngx.log(ngx.ERR, tostring(operation)) end
+	if not operation then return end
+	if not operation[2] then
+		error("Operation list required for "..tostring(operation[1]), 2)
+	end
 	local host = string.gsub(ngx.var.host, "%.", "-")
-	for _, form_message in pairs(self.metric.form) do
-		local msg = form_message(operation, host)
-		if msg then self:transmit(msg) end
+	local op = string.format("%s.%s", host, operation[1])
+	local prefix = self.prefix
+	for i = 1, #operation[2] do
+		M[operation[2][i]](self, prefix, op)
 	end
 end
 
