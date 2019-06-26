@@ -49,19 +49,11 @@ ffi.cdef[[
 	char *strerror(int errnum);
 ]]
 
-local AF_INET    = C.AF_INET
-local SOCK_DGRAM = C.SOCK_DGRAM
-local inet_aton  = C.inet_aton
-local socket     = C.socket
-local close      = C.close
-local htons      = C.htons
-local sendto     = C.sendto
-local strerror   = C.strerror
-
 function M:new(params)
 	local sock = {
 		host = params.host;
 		port = params.port;
+		sockfd = -1;
 		error_cnt = 0;
 	}
 	setmetatable(sock, self)
@@ -72,18 +64,18 @@ end
 function M:open()
 	-- attempt to open socket
 	for i = 1, 3 do
-		self.sockfd = socket(AF_INET, SOCK_DGRAM, 0)
+		self.sockfd = C.socket(C.AF_INET, C.SOCK_DGRAM, 0)
 		if self.sockfd ~= -1 then break end
 		if i ~= 3 then
 			ngx.log(ngx.ALERT, "[ALERT_NG_SOCK] Failed attempt to open socket number: "..i)
-			error "Impossible to open socket"
+			error("Impossible to open socket", 2)
 		end
 	end
 	
 	local addr = ffi.new("struct sockaddr_in")
-	addr.sin_family = AF_INET
-	addr.sin_port = htons(self.port)
-	inet_aton(self.host, addr.sin_addr)
+	addr.sin_family = C.AF_INET
+	addr.sin_port = C.htons(self.port)
+	C.inet_aton(self.host, addr.sin_addr)
 	
 	self.dest_addr = ffi.cast("struct sockaddr *", addr)
 	self.addr_len  = ffi.cast("socklen_t", ffi.sizeof(addr))
@@ -92,19 +84,28 @@ function M:open()
 end
 
 function M:close()
-	close(self.sockfd)
+	C.close(self.sockfd)
 	ngx.log(ngx.WARN, string.format("Socket on %s:%d closed", self.host, tonumber(self.port)))
 end
 
-function M:send(msg)
-	msg = tostring(msg)
-	local r = sendto(self.sockfd, msg, #msg, 0, self.dest_addr, self.addr_len)
+function M:send(msg, len)
+	if type(msg) == 'cdata' then
+		if not len then
+			error("msg len required", 2)
+		end
+	else
+		msg = tostring(msg)
+		if not len then
+			len = #msg
+		end
+	end
+	local r = C.sendto(self.sockfd, msg, len, 0, self.dest_addr, self.addr_len)
 	if r == -1 then self:error() end
 end
 
 function M:error()
 	self.error_cnt = self.error_cnt + 1
-	ngx.log(ngx.ALERT, ffi.string(strerror(ffi.errno())))
+	ngx.log(ngx.ALERT, ffi.string(C.strerror(ffi.errno())))
 	ngx.log(ngx.ALERT, "[ALERT_NG_SOCK] Error count: "..self.error_cnt)
 	
 	-- if socket not work correctly then reopen it
