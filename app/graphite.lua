@@ -71,12 +71,12 @@ function M:new(params)
 	return graph
 end
 
-function M:send()
+function M:send(...)
 	-- operation[1] - metric name
 	-- operation[2] - list of metric's types
 	-- operation[3] - reserved for internal usage
 	-- operation[4] - reserved for internal usage
-	local success, operation = pcall(self.qualifier, self)
+	local success, operation = pcall(self.qualifier, self, ...)
 	if not success then return ngx.log(ngx.ERR, tostring(operation)) end
 	if not operation then return end
 	if not operation[2] then
